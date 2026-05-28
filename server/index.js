@@ -2,7 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const { Pool } = require('pg');
+const sqlite3 = require('sqlite3').verbose();
 require('dotenv').config();
 
 const app = express();
@@ -12,50 +12,65 @@ app.use(express.json());
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: "http://localhost:5173", // Default Vite development port
+        origin: "http://localhost:5173",
         methods: ["GET", "POST"]
     }
 });
 
-// PostgreSQL Connection Pool
-const pool = new Pool({
-    user: process.env.PG_USER,
-    password: process.env.PG_PASSWORD,
-    host: process.env.PG_HOST,
-    database: process.env.PG_DATABASE,
-    port: process.env.PG_PORT,
+// Initialize SQLite Database (creates 'messenger.db' file if it doesn't exist)
+const db = new sqlite3.Database('./messenger.db', (err) => {
+    if (err) {
+        console.error("Error opening database:", err.message);
+    } else {
+        console.log("Connected to the SQLite database.");
+    }
+});
+
+// Create the messages table automatically on startup
+db.serialize(() => {
+    db.run(`
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
 });
 
 // HTTP Endpoint: Fetch chat history
-app.get('/api/messages', async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM messages ORDER BY created_at ASC');
-        res.json(result.rows);
-    } catch (err) {
-        console.error(err.message);
-        res.status(500).send("Server Error");
-    }
+app.get('/api/messages', (req, res) => {
+    db.all('SELECT * FROM messages ORDER BY created_at ASC', [], (err, rows) => {
+        if (err) {
+            console.error(err.message);
+            return res.status(500).send("Server Error");
+        }
+        res.json(rows);
+    });
 });
 
 // Socket.io Real-time Communication
 io.on('connection', (socket) => {
     console.log(`User connected: ${socket.id}`);
 
-    // Listen for incoming messages from clients
-    socket.on('send_message', async (data) => {
+    // Listen for incoming messages
+    socket.on('send_message', (data) => {
         const { username, content } = data;
-        try {
-            // Persist the message to PostgreSQL
-            const result = await pool.query(
-                'INSERT INTO messages (username, content) VALUES ($1, $2) RETURNING *',
-                [username, content]
-            );
 
-            // Broadcast the saved message to all connected clients
-            io.emit('receive_message', result.rows[0]);
-        } catch (err) {
-            console.error("Database save failed:", err.message);
-        }
+        const sql = 'INSERT INTO messages (username, content) VALUES (?, ?)';
+        db.run(sql, [username, content], function (err) {
+            if (err) {
+                return console.error("Database save failed:", err.message);
+            }
+
+            // 'this.lastID' contains the ID of the newly inserted row.
+            // Fetch the completed row (including the default timestamp) to broadcast.
+            db.get('SELECT * FROM messages WHERE id = ?', [this.lastID], (err, row) => {
+                if (!err && row) {
+                    io.emit('receive_message', row);
+                }
+            });
+        });
     });
 
     socket.on('disconnect', () => {
