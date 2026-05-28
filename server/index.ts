@@ -1,15 +1,29 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const cors = require('cors');
-const sqlite3 = require('sqlite3').verbose();
-require('dotenv').config();
+import express, { Request, Response } from 'express';
+import http from 'http';
+import { Server } from 'socket.io';
+import cors from 'cors';
+import sqlite3 from 'sqlite3';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const server = http.createServer(app);
+
+// Define TypeScript interfaces for our real-time events
+interface MessagePayload {
+    username: string;
+    content: string;
+}
+
+interface MessageRow extends MessagePayload {
+    id: number;
+    created_at: string;
+}
+
 const io = new Server(server, {
     cors: {
         origin: "http://localhost:5173",
@@ -17,8 +31,7 @@ const io = new Server(server, {
     }
 });
 
-// Initialize SQLite Database (creates 'messenger.db' file if it doesn't exist)
-const db = new sqlite3.Database('./messenger.db', (err) => {
+const db = new sqlite3.Database('./messenger.db', (err: Error | null) => {
     if (err) {
         console.error("Error opening database:", err.message);
     } else {
@@ -26,7 +39,6 @@ const db = new sqlite3.Database('./messenger.db', (err) => {
     }
 });
 
-// Create the messages table automatically on startup
 db.serialize(() => {
     db.run(`
         CREATE TABLE IF NOT EXISTS messages (
@@ -38,9 +50,9 @@ db.serialize(() => {
     `);
 });
 
-// HTTP Endpoint: Fetch chat history
-app.get('/api/messages', (req, res) => {
-    db.all('SELECT * FROM messages ORDER BY created_at ASC', [], (err, rows) => {
+// Explicitly type the Express route handlers
+app.get('/api/messages', (req: Request, res: Response) => {
+    db.all('SELECT * FROM messages ORDER BY created_at ASC', [], (err: Error | null, rows: MessageRow[]) => {
         if (err) {
             console.error(err.message);
             return res.status(500).send("Server Error");
@@ -49,23 +61,20 @@ app.get('/api/messages', (req, res) => {
     });
 });
 
-// Socket.io Real-time Communication
 io.on('connection', (socket) => {
     console.log(`User connected: ${socket.id}`);
 
-    // Listen for incoming messages
-    socket.on('send_message', (data) => {
+    // Type checking for incoming message event payloads
+    socket.on('send_message', (data: MessagePayload) => {
         const { username, content } = data;
-
         const sql = 'INSERT INTO messages (username, content) VALUES (?, ?)';
-        db.run(sql, [username, content], function (err) {
+
+        db.run(sql, [username, content], function (this: sqlite3.RunResult, err: Error | null) {
             if (err) {
                 return console.error("Database save failed:", err.message);
             }
 
-            // 'this.lastID' contains the ID of the newly inserted row.
-            // Fetch the completed row (including the default timestamp) to broadcast.
-            db.get('SELECT * FROM messages WHERE id = ?', [this.lastID], (err, row) => {
+            db.get('SELECT * FROM messages WHERE id = ?', [this.lastID], (err: Error | null, row: MessageRow) => {
                 if (!err && row) {
                     io.emit('receive_message', row);
                 }
