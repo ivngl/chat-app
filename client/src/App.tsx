@@ -1,39 +1,48 @@
-import { useEffect, useRef, useState } from 'react';
-import { io } from 'socket.io-client';
+import React, { useState, useEffect, useRef, FormEvent } from 'react';
+import { io, Socket } from 'socket.io-client';
 
-// Connect to backend server
-const socket = io('http://localhost:5000');
+// Define structural interface for data records
+interface Message {
+  id: number;
+  username: string;
+  content: string;
+  created_at: string;
+}
+
+// Persist socket instance outside of the render cycle
+const socket: Socket = io('http://localhost:5000');
 
 function App() {
-  const [username, setUsername] = useState('');
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState([]);
-  const messagesEndRef = useRef(null);
+  const [username, setUsername] = useState<string>('');
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
+  const [message, setMessage] = useState<string>('');
 
-  // Fetch older messages when mounting
+  // Explicitly type your component state arrays
+  const [messages, setMessages] = useState<Message[]>([]);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     fetch('http://localhost:5000/api/messages')
       .then((res) => res.json())
-      .then((data) => setMessages(data))
+      .then((data: Message[]) => setMessages(data))
       .catch((err) => console.error("Error fetching chat history:", err));
   }, []);
 
-  // Listen for real-time messages from server
   useEffect(() => {
-    socket.on('receive_message', (data) => {
+    socket.on('receive_message', (data: Message) => {
       setMessages((prev) => [...prev, data]);
     });
 
-    return () => socket.off('receive_message');
+    return () => {
+      socket.off('receive_message');
+    };
   }, []);
 
-  // Automatically scroll down on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSendMessage = (e) => {
+  const handleSendMessage = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (message.trim()) {
       socket.emit('send_message', { username, content: message });
@@ -41,16 +50,23 @@ function App() {
     }
   };
 
+  const handleLogin = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (username.trim()) {
+      setIsLoggedIn(true);
+    }
+  };
+
   if (!isLoggedIn) {
     return (
       <div style={styles.loginContainer}>
         <h2>Enter Chat</h2>
-        <form onSubmit={() => username.trim() && setIsLoggedIn(true)}>
+        <form onSubmit={handleLogin}>
           <input
             type="text"
             placeholder="Choose a username..."
             value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUsername(e.target.value)}
             style={styles.input}
             required
           />
@@ -93,7 +109,7 @@ function App() {
           type="text"
           placeholder="Type a message..."
           value={message}
-          onChange={(e) => setMessage(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMessage(e.target.value)}
           style={styles.chatInput}
         />
         <button type="submit" style={styles.sendButton}>Send</button>
@@ -102,7 +118,8 @@ function App() {
   );
 }
 
-const styles = {
+// CSS-in-JS style typing mapping
+const styles: Record<string, React.CSSProperties> = {
   loginContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '100px', fontFamily: 'sans-serif' },
   chatContainer: { maxWidth: '600px', margin: '30px auto', border: '1px solid #ddd', borderRadius: '8px', overflow: 'hidden', fontFamily: 'sans-serif', display: 'flex', flexDirection: 'column', height: '80vh' },
   header: { backgroundColor: '#f5f5f5', padding: '10px 15px', borderBottom: '1px solid #ddd' },
